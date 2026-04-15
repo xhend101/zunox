@@ -183,10 +183,35 @@ def check_credits():
         "min_credits": MIN_CREDITS
     })
 
+@app.route("/api/keys/remove-exhausted", methods=["POST"])
+def remove_exhausted_keys():
+    req = request.json or {}
+    exhausted_key = req.get("exhaustedKey")
+    remaining_keys = req.get("remainingKeys", [])
+    
+    if not exhausted_key:
+        return jsonify({"success": False, "error": "No exhausted key provided"})
+    
+    print(f"[KEY-REMOVAL] Removing exhausted API key: {exhausted_key[:8]}...", flush=True)
+    
+    # Verify the key is actually exhausted
+    credits, ok, msg = check_key_credits(exhausted_key)
+    is_exhausted = not ok or (credits is not None and credits < MIN_CREDITS)
+    
+    return jsonify({
+        "success": True,
+        "removedKey": exhausted_key,
+        "isExhausted": is_exhausted,
+        "remainingKeys": remaining_keys,
+        "message": "API key removed due to credit exhaustion" if is_exhausted else "API key still has credits"
+    })
+
 @app.route("/api/generate", methods=["POST"])
 def generate_music():
     req = request.json or {}
     api_key = req.get("apiKey")
+    all_keys = req.get("allKeys", [])
+    
     if not api_key:
         return jsonify({"success": False, "error": "No API key. Add one in Settings."})
 
@@ -220,7 +245,42 @@ def generate_music():
     if req.get("styleWeight") is not None:               payload["styleWeight"]           = float(req["styleWeight"])
     if req.get("weirdnessConstraint") is not None:       payload["weirdnessConstraint"]   = float(req["weirdnessConstraint"])
 
+    # Try generation with current API key
     result = make_suno_request("POST", "/generate", api_key, data=payload)
+
+    # Check if it's a credit error and we have other keys to try
+    if result.get("code") != 200 and is_credit_error(result.get("msg")) and all_keys:
+        # Find current key index
+        current_index = all_keys.index(api_key) if api_key in all_keys else -1
+        
+        # Try next available keys
+        for i in range(current_index + 1, len(all_keys)):
+            next_key = all_keys[i]
+            print(f"[AUTO-SWITCH] Trying next API key {i+1}/{len(all_keys)}", flush=True)
+            
+            # Check if next key has sufficient credits
+            credits, ok, msg = check_key_credits(next_key)
+            if ok and credits >= MIN_CREDITS:
+                print(f"[AUTO-SWITCH] Using API key with {credits} credits", flush=True)
+                result = make_suno_request("POST", "/generate", next_key, data=payload)
+                
+                if result.get("code") == 200:
+                    task_id = extract_task_id(result)
+                    if task_id:
+                        print(f"[AUTO-SWITCH] Successfully generated with new API key", flush=True)
+                        return jsonify({
+                            "success": True,
+                            "taskId": task_id,
+                            "title": req.get("title", req.get("prompt", "Untitled"))[:60],
+                            "model": model,
+                            "instrumental": instrumental,
+                            "style": req.get("style", ""),
+                            "regenerating": True,
+                            "newApiKey": next_key,
+                            "message": "Switched to new API key due to credit exhaustion"
+                        })
+            else:
+                print(f"[AUTO-SWITCH] Next API key insufficient credits: {credits}", flush=True)
 
     if result.get("code") == 200:
         task_id = extract_task_id(result)
