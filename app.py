@@ -114,12 +114,31 @@ def check_credits():
     for key in keys:
         credits, ok, msg = check_key_credits(key)
         if ok:
-            results.append({"key": key, "credits": credits, "status": "ok", "sufficient": True, "removed": False})
-            valid_keys.append(key)
+            sufficient = credits >= MIN_CREDITS
+            results.append({
+                "key": key, 
+                "credits": credits, 
+                "status": "ok", 
+                "sufficient": sufficient, 
+                "removed": not sufficient
+            })
+            if sufficient:
+                valid_keys.append(key)
         else:
-            results.append({"key": key, "credits": None, "status": "error", "msg": msg, "removed": True})
+            results.append({
+                "key": key, 
+                "credits": None, 
+                "status": "error", 
+                "msg": msg, 
+                "removed": True
+            })
 
-    return jsonify({"results": results, "removed": len(keys) - len(valid_keys), "remaining": len(valid_keys), "min_credits": 10})
+    return jsonify({
+        "results": results, 
+        "removed": len(keys) - len(valid_keys), 
+        "remaining": len(valid_keys), 
+        "min_credits": MIN_CREDITS
+    })
 
 @app.route("/api/generate", methods=["POST"])
 def generate_music():
