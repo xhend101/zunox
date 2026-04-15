@@ -1,4 +1,5 @@
 from flask import Flask, render_template, request, jsonify, send_from_directory
+from flask_cors import CORS
 import requests
 import json
 import os
@@ -12,6 +13,9 @@ if hasattr(sys.stderr, 'reconfigure'):
 
 app = Flask(__name__)
 app.secret_key = os.urandom(24)
+
+# Enable CORS for all routes
+CORS(app)
 
 SUNO_API_BASE = "https://api.sunoapi.org/api/v1"
 MIN_CREDITS = 10
@@ -151,10 +155,17 @@ def generate_music():
     instrumental = req.get("instrumental", True)
     model        = req.get("model", "V5_5")
 
+    # Use environment variable for Vercel deployment, fallback to request host
+    host = os.environ.get('VERCEL_URL') or os.environ.get('APP_HOST') or request.host_url.rstrip("/")
+    # Ensure proper URL format for Vercel
+    if host and not host.startswith(('http://', 'https://')):
+        host = f"https://{host}"
+    
     payload = {
         "customMode":   custom_mode,
         "instrumental": instrumental,
-        "model":        model
+        "model":        model,
+        "callBackUrl":  f"{host}/api/callback"
     }
 
     if custom_mode:
@@ -213,5 +224,12 @@ def get_track(task_id):
 def suno_callback():
     return jsonify({"code": 200, "msg": "ok"})
 
-if __name__ == "__main__":
-    app.run(debug=True, host="0.0.0.0", port=5000)
+# Vercel serverless handler
+# Check if running in Vercel environment
+if os.environ.get('VERCEL'):
+    # Export the app for Vercel serverless
+    app.debug = False
+else:
+    # Local development
+    if __name__ == "__main__":
+        app.run(debug=True, host="0.0.0.0", port=5000)
