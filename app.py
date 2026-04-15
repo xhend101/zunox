@@ -76,7 +76,27 @@ def extract_task_id(result):
 def extract_songs_and_status(result):
     data = result.get("data", {})
     if isinstance(data, list):
-        return ("complete" if data else "pending"), data
+        # Filter out songs with 0 duration or no audio URL
+        valid_songs = []
+        filtered_count = 0
+        for i, song in enumerate(data):
+            if isinstance(song, dict):
+                # Check if song has valid duration and audio URL
+                duration = song.get("duration", 0)
+                audio_url = song.get("audio_url") or song.get("url")
+                song_title = song.get("title", f"Song {i+1}")
+                
+                if duration and duration > 0 and audio_url:
+                    valid_songs.append(song)
+                    print(f"[FILTER] Song {i+1} '{song_title}' - Duration: {duration}s - KEPT", flush=True)
+                else:
+                    filtered_count += 1
+                    print(f"[FILTER] Song {i+1} '{song_title}' - Duration: {duration}s, URL: {bool(audio_url)} - FILTERED", flush=True)
+        
+        if filtered_count > 0:
+            print(f"[FILTER] Filtered out {filtered_count} songs with 0 duration or no audio URL", flush=True)
+        
+        return ("complete" if valid_songs else "pending"), valid_songs
     if not isinstance(data, dict):
         return "pending", []
 
@@ -89,6 +109,25 @@ def extract_songs_and_status(result):
         songs = data.get("sunoData") or data.get("songs") or data.get("data") or []
     if not isinstance(songs, list): songs = []
 
+    # Filter out songs with 0 duration or no audio URL
+    valid_songs = []
+    filtered_count = 0
+    for i, song in enumerate(songs):
+        if isinstance(song, dict):
+            duration = song.get("duration", 0)
+            audio_url = song.get("audio_url") or song.get("url")
+            song_title = song.get("title", f"Song {i+1}")
+            
+            if duration and duration > 0 and audio_url:
+                valid_songs.append(song)
+                print(f"[FILTER] Song {i+1} '{song_title}' - Duration: {duration}s - KEPT", flush=True)
+            else:
+                filtered_count += 1
+                print(f"[FILTER] Song {i+1} '{song_title}' - Duration: {duration}s, URL: {bool(audio_url)} - FILTERED", flush=True)
+    
+    if filtered_count > 0:
+        print(f"[FILTER] Filtered out {filtered_count} songs with 0 duration or no audio URL", flush=True)
+
     if status in ("success", "first_success", "complete", "finished"):
         status = "complete"
     elif status in ("running", "processing", "composing", "streaming"):
@@ -100,7 +139,7 @@ def extract_songs_and_status(result):
     elif not status or status in ("pending", "queued", "waiting"):
         status = "pending"
 
-    return status, songs
+    return status, valid_songs
 
 
 # ——————————————————————————————
