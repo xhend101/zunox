@@ -83,8 +83,12 @@ def extract_songs_and_status(result):
             if isinstance(song, dict):
                 # Check if song has valid duration and audio URL
                 duration = song.get("duration", 0)
-                audio_url = song.get("audio_url") or song.get("url")
+                audio_url = song.get("audio_url") or song.get("url") or song.get("audio") or song.get("audioUrl") or song.get("mp3") or song.get("download_url")
                 song_title = song.get("title", f"Song {i+1}")
+                
+                # Log all available fields for debugging
+                if not audio_url and duration and duration > 0:
+                    print(f"[DEBUG] Song {i+1} fields: {list(song.keys())}", flush=True)
                 
                 if duration and duration > 0 and audio_url:
                     valid_songs.append(song)
@@ -115,8 +119,12 @@ def extract_songs_and_status(result):
     for i, song in enumerate(songs):
         if isinstance(song, dict):
             duration = song.get("duration", 0)
-            audio_url = song.get("audio_url") or song.get("url")
+            audio_url = song.get("audio_url") or song.get("url") or song.get("audio") or song.get("audioUrl") or song.get("mp3") or song.get("download_url")
             song_title = song.get("title", f"Song {i+1}")
+            
+            # Log all available fields for debugging
+            if not audio_url and duration and duration > 0:
+                print(f"[DEBUG] Song {i+1} fields: {list(song.keys())}", flush=True)
             
             if duration and duration > 0 and audio_url:
                 valid_songs.append(song)
@@ -129,7 +137,8 @@ def extract_songs_and_status(result):
         print(f"[FILTER] Filtered out {filtered_count} songs with 0 duration or no audio URL", flush=True)
 
     if status in ("success", "first_success", "complete", "finished"):
-        status = "complete"
+        # Only mark as complete if we have valid songs with audio URLs
+        status = "complete" if valid_songs else "pending"
     elif status in ("running", "processing", "composing", "streaming"):
         status = "first"
     elif status in ("text_success", "writing"):
@@ -152,7 +161,9 @@ def index():
 
 @app.route("/api/keys/check-credits", methods=["POST"])
 def check_credits():
-    keys = (request.json or {}).get("keys", [])
+    req = request.json or {}
+    keys = req.get("keys", [])
+    auto_remove = req.get("autoRemove", False)
     results, valid_keys = [], []
     for key in keys:
         credits, ok, msg = check_key_credits(key)
@@ -180,7 +191,45 @@ def check_credits():
         "results": results, 
         "removed": len(keys) - len(valid_keys), 
         "remaining": len(valid_keys), 
-        "min_credits": MIN_CREDITS
+        "min_credits": MIN_CREDITS,
+        "validKeys": valid_keys if auto_remove else None
+    })
+
+@app.route("/api/keys/auto-remove-low", methods=["POST"])
+def auto_remove_low_credits():
+    keys = (request.json or {}).get("keys", [])
+    results, valid_keys = [], []
+    
+    for key in keys:
+        credits, ok, msg = check_key_credits(key)
+        if ok and credits >= MIN_CREDITS:
+            valid_keys.append(key)
+            results.append({
+                "key": key,
+                "credits": credits,
+                "status": "kept"
+            })
+        elif ok:
+            results.append({
+                "key": key,
+                "credits": credits,
+                "status": "removed",
+                "reason": f"Insufficient credits ({credits} < {MIN_CREDITS})"
+            })
+        else:
+            results.append({
+                "key": key,
+                "credits": None,
+                "status": "removed",
+                "reason": msg or "Error checking credits"
+            })
+    
+    return jsonify({
+        "success": True,
+        "removed": len(keys) - len(valid_keys),
+        "remaining": len(valid_keys),
+        "validKeys": valid_keys,
+        "results": results
     })
 
 @app.route("/api/keys/remove-exhausted", methods=["POST"])
@@ -245,6 +294,24 @@ def generate_music():
     if req.get("styleWeight") is not None:               payload["styleWeight"]           = float(req["styleWeight"])
     if req.get("weirdnessConstraint") is not None:       payload["weirdnessConstraint"]   = float(req["weirdnessConstraint"])
 
+    # Pre-check: verify selected key has sufficient credits
+    credits, ok, msg = check_key_credits(api_key)
+    if ok and credits < MIN_CREDITS and all_keys:
+        print(f"[AUTO-ROLL] Selected key has {credits} credits (< {MIN_CREDITS}), rolling to next key", flush=True)
+        # Find current key index and try next keys
+        current_index = all_keys.index(api_key) if api_key in all_keys else -1
+        
+        for i in range(current_index + 1, len(all_keys)):
+            next_key = all_keys[i]
+            next_credits, next_ok, next_msg = check_key_credits(next_key)
+            if next_ok and next_credits >= MIN_CREDITS:
+                print(f"[AUTO-ROLL] Switched to key with {next_credits} credits", flush=True)
+                api_key = next_key
+                break
+        else:
+            # No key with sufficient credits found
+            return jsonify({"success": False, "error": f"No API key with sufficient credits (min {MIN_CREDITS}). Please add more keys."})
+
     # Try generation with current API key
     result = make_suno_request("POST", "/generate", api_key, data=payload)
 
@@ -292,7 +359,8 @@ def generate_music():
             "title": req.get("title", req.get("prompt", "Untitled"))[:60],
             "model": model,
             "instrumental": instrumental,
-            "style": req.get("style", "")
+            "style": req.get("style", ""),
+            "apiKey": api_key  # Return the actual key used
         })
 
     return jsonify({"success": False, "error": result.get("msg", "Generation failed")})
