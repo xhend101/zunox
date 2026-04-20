@@ -19,11 +19,19 @@ let isPlaying = false;
 // ==============================
 
 document.addEventListener('DOMContentLoaded', () => {
-  selectModel('V5_5');
-  loadApiKeys();
-  loadTracks();
-  loadPresets();
-  setupCharCounters();
+  async function init() {
+    // Clear API Keys textarea on load
+    document.getElementById('api-keys-input').value = '';
+    
+    selectModel('V5_5');
+    await loadApiKeys();
+    await loadTracks();
+    await loadPresets();
+    setupCharCounters();
+    displayStoredKeys();
+    showPage('generate');
+  }
+  init();
   setInterval(refreshPendingTracks, 10000);
 });
 
@@ -178,7 +186,14 @@ async function saveApiKeys() {
     const uniqueKeys = [...new Set(keys)];
     localStorage.setItem('zunox_api_keys', JSON.stringify(uniqueKeys));
     showToast(`✅ Saved ${uniqueKeys.length} API key${uniqueKeys.length !== 1 ? 's' : ''}`, 'success');
+    
+    // Clear the textarea
+    document.getElementById('api-keys-input').value = '';
+    
     await loadApiKeys();
+    
+    // Check credits automatically after saving
+    await checkAllCredits();
   } catch (e) {
     showToast('❌ Failed to save keys', 'error');
   }
@@ -192,46 +207,95 @@ async function checkAllCredits() {
   showToast('🔍 Checking credits...', 'info');
 
   try {
-    const res = await fetch('/api/keys/check-credits', {
+    const res = await fetch('/api/keys/auto-remove-low', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ keys: apiKeys })
     });
     const data = await res.json();
 
-    const resultsDiv = document.getElementById('credits-results');
-    const listDiv = document.getElementById('credits-list');
-    resultsDiv.style.display = 'block';
-    listDiv.innerHTML = '';
-
-    data.results.forEach(item => {
-      const el = document.createElement('div');
-      el.className = `credit-item${item.removed ? ' credit-removed' : ''}`;
-      const masked = item.key.length > 8 ? item.key.slice(0, 6) + '...' + item.key.slice(-6) : item.key;
-
-      let amountHtml;
-      if (item.status === 'error') {
-        amountHtml = `<span class="credit-amount error">❌ ${item.msg}</span>`;
-      } else if (item.removed) {
-        amountHtml = `<span class="credit-amount low">${item.credits} credits <span class="removed-label">removed</span></span>`;
-      } else {
-        amountHtml = `<span class="credit-amount">${item.credits} credits ✓</span>`;
-      }
-
-      el.innerHTML = `<span class="credit-key">${masked}</span>${amountHtml}`;
-      listDiv.appendChild(el);
-    });
-
     if (data.removed > 0) {
-      const validKeys = data.results.filter(r => !r.removed).map(r => r.key);
-      localStorage.setItem('zunox_api_keys', JSON.stringify(validKeys));
+      localStorage.setItem('zunox_api_keys', JSON.stringify(data.validKeys));
       await loadApiKeys();
-      showToast(`⚠️ ${data.removed} key${data.removed > 1 ? 's' : ''} removed (< ${data.min_credits} credits). ${data.remaining} key${data.remaining !== 1 ? 's' : ''} remaining.`, 'info');
+      showToast(`⚠️ ${data.removed} key${data.removed > 1 ? 's' : ''} auto-removed (< 10 credits). ${data.remaining} key${data.remaining !== 1 ? 's' : ''} remaining.`, 'info');
     } else {
       showToast(`✅ All ${data.remaining} key${data.remaining !== 1 ? 's' : ''} have sufficient credits.`, 'success');
     }
+    
+    // Clear the textarea and update stored keys display
+    document.getElementById('api-keys-input').value = '';
+    await displayStoredKeys();
   } catch (e) {
     showToast('❌ Failed to check credits', 'error');
+  }
+}
+
+async function displayStoredKeys() {
+  const container = document.getElementById('stored-keys-list');
+  const section = document.getElementById('stored-keys-section');
+  
+  try {
+    const stored = JSON.parse(localStorage.getItem('zunox_api_keys') || '[]');
+    section.style.display = 'block';
+    container.innerHTML = '';
+    
+    if (stored.length === 0) {
+      container.innerHTML = '<div style="color:var(--text-muted);font-size:13px;padding:10px 14px;">No API keys saved yet</div>';
+      return;
+    }
+    
+    // Fetch real-time credits for each key
+    const res = await fetch('/api/keys/check-credits', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ keys: stored })
+    });
+    const data = await res.json();
+    
+    // Create a map of key -> credits
+    const creditsMap = {};
+    data.results.forEach(item => {
+      if (item.status === 'ok') {
+        creditsMap[item.key] = item.credits;
+      }
+    });
+    
+    stored.forEach((key, i) => {
+      const el = document.createElement('div');
+      el.className = 'stored-key-item';
+      const masked = key.length > 8 ? key.slice(0, 6) + '...' + key.slice(-6) : key;
+      const credits = creditsMap[key] !== undefined ? creditsMap[key] : 'Checking...';
+      const isLow = credits < 10 && credits !== 'Checking...';
+      
+      el.innerHTML = `
+        <div class="stored-key-info">
+          <span class="stored-key-index">#${i + 1}</span>
+          <span class="stored-key-value">${masked}</span>
+        </div>
+        <div class="stored-key-actions">
+          <span class="stored-key-credits ${isLow ? 'credits-low' : ''}">${typeof credits === 'number' ? credits + ' credits' : credits}</span>
+          <button class="stored-key-delete" onclick="deleteApiKey(${i})" title="Delete this API key">✕</button>
+        </div>
+      `;
+      container.appendChild(el);
+    });
+  } catch (e) {
+    console.error('Failed to display stored keys:', e);
+  }
+}
+
+function deleteApiKey(index) {
+  try {
+    const stored = JSON.parse(localStorage.getItem('zunox_api_keys') || '[]');
+    if (index >= 0 && index < stored.length) {
+      stored.splice(index, 1);
+      localStorage.setItem('zunox_api_keys', JSON.stringify(stored));
+      loadApiKeys();
+      displayStoredKeys();
+      showToast('🗑️ API key deleted', 'success');
+    }
+  } catch (e) {
+    showToast('❌ Failed to delete API key', 'error');
   }
 }
 
@@ -309,6 +373,13 @@ async function generateMusic() {
       const data = await res.json();
 
       if (data.success && data.taskId) {
+        // If backend returned a different apiKey (rolling occurred), update the dropdown
+        if (data.apiKey && data.apiKey !== apiKey) {
+          document.getElementById('api-key-select').value = data.apiKey;
+          apiKey = data.apiKey;
+          showToast('🔄 Auto-switched to API key with sufficient credits', 'info');
+        }
+        
         if (i === 0) {
           showToast('🎵 Generation started!', 'success');
           showGenerationStatus(basePayload.title || basePayload.prompt || 'Track');
@@ -342,6 +413,9 @@ async function generateMusic() {
   
   // Reload tracks to show new entries
   loadTracks();
+  
+  // Reset button state if not already reset by polling
+  setGenerateLoading(false);
 }
 
 function setGenerateLoading(loading) {
@@ -530,10 +604,31 @@ function updateLibraryBadge() {
   }
 }
 
+function toggleRecent() {
+  const icon = document.getElementById('recent-toggle-icon');
+  const isExpanded = icon.textContent === '▲';
+  
+  icon.textContent = isExpanded ? '▼' : '▲';
+  
+  // Save state to localStorage
+  localStorage.setItem('zunox_recent_expanded', !isExpanded ? 'true' : 'false');
+  
+  // Re-render with new state
+  renderRecentTracks();
+}
+
 function renderRecentTracks() {
   const container = document.getElementById('recent-tracks');
   const empty = document.getElementById('empty-recent');
-  const recent = tracks.slice(0, 5);
+  const icon = document.getElementById('recent-toggle-icon');
+  
+  // Check if expanded state is saved
+  const isExpanded = localStorage.getItem('zunox_recent_expanded') === 'true';
+  icon.textContent = isExpanded ? '▲' : '▼';
+  
+  // Show 2 by default, all when expanded
+  const limit = isExpanded ? tracks.length : 2;
+  const recent = tracks.slice(0, limit);
 
   if (recent.length === 0) {
     empty.style.display = 'block';
@@ -874,9 +969,23 @@ function loadPresets() {
   renderPresets();
 }
 
+function togglePresets() {
+  const icon = document.getElementById('presets-toggle-icon');
+  const isExpanded = icon.textContent === '▲';
+  
+  icon.textContent = isExpanded ? '▼' : '▲';
+  
+  // Save state to localStorage
+  localStorage.setItem('zunox_presets_expanded', !isExpanded ? 'true' : 'false');
+  
+  // Re-render with new state
+  renderPresets();
+}
+
 function renderPresets() {
   const container = document.getElementById('presets-list');
   const section = document.getElementById('presets-section');
+  const icon = document.getElementById('presets-toggle-icon');
   
   try {
     const presets = JSON.parse(localStorage.getItem('zunox_presets') || '[]');
@@ -888,7 +997,15 @@ function renderPresets() {
     section.style.display = 'block';
     container.innerHTML = '';
     
-    presets.forEach((p, i) => {
+    // Check if expanded state is saved
+    const isExpanded = localStorage.getItem('zunox_presets_expanded') === 'true';
+    icon.textContent = isExpanded ? '▲' : '▼';
+    
+    // Show 2 by default, all when expanded
+    const limit = isExpanded ? presets.length : 2;
+    const displayPresets = presets.slice(0, limit);
+    
+    displayPresets.forEach((p, i) => {
       const div = document.createElement('div');
       div.className = 'preset-item';
       
