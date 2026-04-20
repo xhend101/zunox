@@ -211,8 +211,8 @@
             </div>
           </div>
 
-          <!-- API Key quick select -->
-          <div class="form-section" id="api-key-quick">
+          <!-- API Key quick select (hidden) -->
+          <div class="form-section" id="api-key-quick" style="display:none">
             <label class="section-label">API Key</label>
             <select id="api-key-select" class="form-select">
               <option value="">— Select API Key —</option>
@@ -257,7 +257,12 @@
 
           <!-- Recent Presets -->
           <div class="presets-section" id="presets-section" style="display:none">
-            <h2 class="section-heading">Recent Presets</h2>
+            <div class="section-heading-with-toggle">
+              <h2 class="section-heading">Recent Presets</h2>
+              <button class="toggle-visibility-btn" onclick="togglePresets()" id="presets-toggle-btn" title="Show/Hide All">
+                <span id="presets-toggle-icon">▼</span>
+              </button>
+            </div>
             <div id="presets-list" class="presets-list">
               <!-- Presets injected here -->
             </div>
@@ -265,7 +270,12 @@
 
           <!-- Recent generations -->
           <div class="recent-section">
-            <h2 class="section-heading">Recent Generations</h2>
+            <div class="section-heading-with-toggle">
+              <h2 class="section-heading">Recent Generations</h2>
+              <button class="toggle-visibility-btn" onclick="toggleRecent()" id="recent-toggle-btn" title="Show/Hide All">
+                <span id="recent-toggle-icon">▼</span>
+              </button>
+            </div>
             <div id="recent-tracks" class="tracks-list">
               <div class="empty-state" id="empty-recent">
                 <div class="empty-icon">🎼</div>
@@ -323,10 +333,10 @@
             </button>
           </div>
 
-          <!-- Credits Results -->
-          <div id="credits-results" class="credits-results" style="display:none">
-            <h3 class="credits-title">Credit Balance</h3>
-            <div id="credits-list" class="credits-list"></div>
+          <!-- Stored Keys with Real-time Credits -->
+          <div id="stored-keys-section" class="stored-keys-section" style="margin-top:24px">
+            <h3 class="credits-title">Stored API Keys</h3>
+            <div id="stored-keys-list" class="stored-keys-list"></div>
           </div>
         </div>
 
@@ -354,6 +364,10 @@
                 <span class="api-info-label">Version</span>
                 <code>Zunox v1.0</code>
               </div>
+            </div>
+            <div class="about-footer" style="margin-top:20px;padding-top:16px;border-top:1px solid var(--border)">
+              <p style="font-size:13px;color:var(--text-muted);margin-bottom:8px">Please use responsibly.</p>
+              <p style="font-size:13px;color:var(--text-secondary)"><a href="https://fb.com/asroni" target="_blank" class="link">Hendro</a></p>
             </div>
           </div>
         </div>
